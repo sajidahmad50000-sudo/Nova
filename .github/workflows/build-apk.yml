@@ -1,0 +1,90 @@
+name: Build Nova APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Find Nova ZIP
+        id: find_zip
+        shell: bash
+        run: |
+          ZIP=$(find . -maxdepth 1 -type f -name 'Nova_AI_MOBILE_GITHUB*.zip' -print -quit)
+
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: Nova project ZIP not found."
+            echo "Files in repository:"
+            ls -la
+            exit 1
+          fi
+
+          echo "Found ZIP: $ZIP"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+
+      - name: Extract Nova project
+        shell: bash
+        run: |
+          rm -rf nova_project extracted_nova
+          mkdir -p extracted_nova
+
+          unzip -q "${{ steps.find_zip.outputs.zip }}" -d extracted_nova
+
+          echo "Extracted files:"
+          find extracted_nova -maxdepth 3 -type f | head -100
+
+          PROJECT_DIR=$(find extracted_nova -maxdepth 3 -type f \
+            \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) \
+            -printf '%h\n' | head -1)
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERROR: Gradle project was not found inside ZIP."
+            exit 1
+          fi
+
+          echo "Project directory: $PROJECT_DIR"
+          mv "$PROJECT_DIR" nova_project
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Verify Java
+        run: |
+          java -version
+          javac -version
+
+      - name: Build Nova APK
+        working-directory: nova_project
+        run: |
+          gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Check APK
+        run: |
+          find nova_project/app/build/outputs -type f -name '*.apk' -print
+          test -f nova_project/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload Nova APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nova-debug-APK
+          path: nova_project/app/build/outputs/apk/debug/app-debug.apk
